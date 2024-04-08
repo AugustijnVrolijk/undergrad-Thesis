@@ -41,14 +41,16 @@ class tester():
         self.graph = graph
         self.verticeCount = len(graph.distanceMatrix)
         self.correlationMatrix = np.ones((self.verticeCount, self.verticeCount))
+        self.countMatrix = np.zeros((self.verticeCount, self.verticeCount))
         self.probMatrix = np.empty((self.verticeCount, self.verticeCount))
         self.minLenMatrix = np.full((self.verticeCount, self.verticeCount), np.inf)
         self.rng = np.random.default_rng()
         self.mean = 0
-        self.solutionCount = 0 
         self.decay = probDecay
         self.iterCount = iterCount
         self.popSize = popSize
+        self.oversixCount = 0
+        self.graphdata = np.zeros((iterCount, 4))
 
     def mainRun(self):
         for i in range(self.iterCount):
@@ -60,6 +62,17 @@ class tester():
             self.batchCalc(solutions[:, 1])
 
             for j in solutions:
+                if j[1] < 4200:
+                    self.graphdata[i, 0] = self.graphdata[i, 0] + 1
+                    if j[1] < 3900:
+                        self.graphdata[i, 1] = self.graphdata[i, 1] + 1
+                        if j[1] < 3600:
+                            self.graphdata[i, 2] = self.graphdata[i, 2] + 1
+                            if j[1] < 3400:
+                                print(j[1])
+                                self.graphdata[i, 3] = self.graphdata[i, 3] + 1
+
+                self.updateCountMatrix(j[0])
                 normalisedVal = self.getNormalisedVal(j[1])
                 self.updateCorrelation(j[0], normalisedVal)
                 self.checkIfMin(j[0], j[1])
@@ -67,9 +80,14 @@ class tester():
             print(i)
             
         self.genBestGuess()
-        print(self.correlationMatrix)
-        print("mean is: {}".format(self.mean))
         return
+    
+    def updateCountMatrix(self, solution):
+        i = solution[-1]
+        for f in range(len(solution)):
+            j = solution[f]
+            self.countMatrix[i][j] += 1
+            i = j
     
     def checkIfMin(self, solution, score):
         avLen = score/self.verticeCount
@@ -82,18 +100,20 @@ class tester():
         return
 
     def batchCalc(self, solutions):
-        self.mean = 0
+        tempMean = 0
         self.variance = 0
         self.meanAbsoluteDeviation = 0
         length = len(solutions)
 
         for sol in solutions:
-            temp = sol - self.mean
+            temp = (sol - self.mean)
 
-            self.variance += (temp*temp)/length
+            self.variance += temp*temp
             self.meanAbsoluteDeviation += abs(temp)/length
-            self.mean += sol/length
-
+            tempMean += sol/length
+        
+        self.variance = self.variance/length
+        self.mean = tempMean
         self.sd = math.sqrt(self.variance)
         return
     
@@ -108,10 +128,13 @@ class tester():
         return
 
     def getNormalisedVal(self, score:float):
-        p = 3
-        a = 6
+        p = 1
+        a = 10
         temp = (math.e)**(-(((score-self.mean)**2)/(2*(self.sd)**2))**p)
         val = a - a*temp
+        if val == 6:
+            self.oversixCount += 1
+
         if score > self.mean:
             val = -abs(val)
         return val
@@ -129,9 +152,11 @@ class tester():
         for i in range(self.verticeCount):
             validGuesses.append(i)
 
-        bestGuess = [0]
-        curCity = 0
-        for i in range(self.verticeCount):
+        curCity = np.random.choice(validGuesses)
+        validGuesses.remove(curCity)
+        bestGuess = [curCity]
+        
+        for i in range(self.verticeCount-1):
             temp = -10000000
             chosenCity = None
             for city in validGuesses:
@@ -142,6 +167,8 @@ class tester():
             validGuesses.remove(chosenCity)
 
         print("best guess : {} has value {} \n".format(bestGuess, self.graph.calcDistance(bestGuess)))
+        print("mean: {}  sd: {} \n".format(self.mean, self.sd))
+        print("MAD: {}".format(self.meanAbsoluteDeviation))
         return
 
     def genProbChromosome(self):
@@ -172,14 +199,18 @@ def main():
     graph = fetchGraph('burma14.xml')
     agent = tester(graph, 100, 200, 0.9)
     agent.mainRun()
-    
+    print("over 6")
+    print(agent.oversixCount)
     # convert array into dataframe 
-    DF = pd.DataFrame(agent.minLenMatrix) 
+    DF = pd.DataFrame(agent.graphdata) 
     DF2 = pd.DataFrame(graph.distanceMatrix)
+    DF3 = pd.DataFrame(agent.correlationMatrix)
+    DF4 = pd.DataFrame(agent.countMatrix)
     # save the dataframe as a csv file 
     DF.to_csv("data1.csv")
     DF2.to_csv("data2.csv")
-
+    DF3.to_csv("correlationMatrix.csv")
+    DF4.to_csv("countMatrix.csv")
     return
 
 if __name__ == "__main__":

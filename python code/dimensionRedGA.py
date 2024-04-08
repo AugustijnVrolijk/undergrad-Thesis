@@ -7,14 +7,152 @@ import matplotlib.pyplot as plt
 import pandas as pd 
 import time
 
+"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+POSSIBLE BUG:::::::::::::
+    when generating a solution:
+        a vertice called may have deleted transition containing the allowed next vertices..
+        i.e. solution for graph 1->5 is: 1->3->5->2
+        but vertice 2 removed transition 2-> 4 as a possible move.
+
+        In this case either reroll, or lower probability of transitions making partial solution
+        (1->3, 3->5 and 5->2)
+
+
+possible bug,
+    when analysing a solution:
+        removing edge, then in future iterations if that edge has been removed the index may fail for changing correlation etc..
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"""
+
 class vertex():
-    def __init__(self) -> None:
-        self.closestVertices = None
+    def __init__(self, edges, decay) -> None:
+
+        self.nEdges = len(edges)
+        self.edges = edges #list of lists, each sub list represents the vertices it goes through in the transition
+        self.edgeBest = np.full(self.nEdges, np.inf)
+        self.edgeCorrelation = np.ones(self.nEdges, dtype=float) 
+        self.edgeProb = np.empty(self.nEdges, dtype=float)
+        self.edgeNum = np.ones(self.nEdges, dtype=int) #number of vertices this particular transition goes through, one at the beginning
+        self.rng = np.random.default_rng()
+        self.decay = decay
         return
     
-    def getNClosest(self, distance:int, edges:list) -> None:
+    def offsetProbMatrix(self):
+        minVal = np.min(self.edgeCorrelation)
+        self.edgeProb = self.edgeCorrelation + 1.1*abs(minVal)
+        total = np.sum(self.edgeProb)
+        self.edgeProb = np.divide(self.edgeProb, total)
+        self.edgeCorrelation *= self.decay
+        return
+    
+    def getValidTransitions(self, notValid):
+        valid = []
+        for i in range(self.nEdges):
+            allow = True
+            for j in range(self.edgeNum[i]):
+                if self.edges[i][j] in notValid:
+                    allow = False
+                    break
+            if allow:
+                valid.append(i)
+
+        return valid
+
+    def chooseTransition(self, notValid):
+        valid = self.getValidTransitions(notValid)
+        if len(valid) == 0:
+            print("no valid found")
+            exit()
+        
+        prob = self.edgeProb[valid]
+        constant = 1/np.sum(prob)
+        prob *= constant
+        cur = self.rng.choice(valid,p=prob)
+        return self.edges[cur], cur
+    
+    def getBestTransition(self, notValid):
+        valid = self.getValidTransitions(notValid)
+        if len(valid) == 0:
+            print("no valid found")
+            exit()
+        
+        best = valid[0]
+        for i in valid:
+            if self.edgeProb[i] > self.edgeProb[best]:
+                best = i
+    
+        return self.edges[best]
+
+    def updateEdgeVals(self, edgeID, score, normalisedVal) -> None:
+
+        self.edgeCorrelation[edgeID] += normalisedVal
+        if score < self.edgeBest[edgeID]:
+            self.edgeBest[edgeID] = score
         return
 
+    def addEdge(self):
+        
+        return
+    
+    def removeEdge(self):
+
+        return
+    
 class Graph():
     def __init__(self, XMLgraph) -> None:
         self.distanceMatrix = np.zeros((len(XMLgraph),len(XMLgraph)))
@@ -25,25 +163,33 @@ class Graph():
                 weight = int(float(Edge.get('cost')))
                 self.distanceMatrix[parent1][parent2] = weight
             parent1 += 1
-                
+
     def calcDistance(self, circuitVector :list) -> int: 
-        
         distance = 0
         i = circuitVector[-1]
         for f in range(len(circuitVector)):
-            j = circuitVector[f]
-            distance += self.distanceMatrix[i][j]
-            i = j
+            try:
+                j = circuitVector[f]
+                distance += self.distanceMatrix[i][j]
+                i = j
+            except:
+                print(circuitVector)
+                exit()
 
         return distance
 
 class tester():
     def __init__(self, graph:Graph, iterCount:int, popSize:int, probDecay:float):
-        self.graph = graph
         self.verticeCount = len(graph.distanceMatrix)
-        self.correlationMatrix = np.ones((self.verticeCount, self.verticeCount))
-        self.probMatrix = np.empty((self.verticeCount, self.verticeCount))
-        self.rng = np.random.default_rng()
+        vertices = [[i] for i in range(self.verticeCount)]
+
+        self.vertices = np.empty(self.verticeCount, dtype=object)
+        for i in range(len(graph.distanceMatrix)):
+            temp = vertices.copy()
+            temp.pop(i)
+            self.vertices[i] = vertex(temp, probDecay)
+
+        self.graph = graph
         self.mean = 0
         self.solutionCount = 0 
         self.decay = probDecay
@@ -53,106 +199,113 @@ class tester():
     def mainRun(self):
         for i in range(self.iterCount):
             self.offsetProbMatrix()
-            solutions = np.empty(100,dtype=object)
+            solutions = np.empty((self.popSize, 2),dtype=object)
             for j in range(self.popSize):
-                temp = self.genProbChromosome()
-                solutions[j] = (temp, self.graph.calcDistance(temp))
+                temp, tempID = self.genProbChromosome()
+                solutions[j] = self.graph.calcDistance(temp), tempID
+            self.batchCalc(solutions[:, 0])
+            add = []
+            rm = []
             for j in solutions:
-                self.testAdd(j[1], j[0])
+                if j[0] < self.mean - (2*self.sd):
+                    add.append((j[0], j[1]))
+                elif j[0] > self.mean + (2*self.sd):
+                    rm.append((j[0], j[1]))
+            
+                normalisedVal = self.getNormalisedVal(j[0])
+                self.updateCorrelation(j[1], j[0],normalisedVal)
+            
+            for sol in add:
+                print(sol)
+                #solutionID format: [(vertexID, edgeID),...,...]
+                self.addEdge(sol)
             self.genBestGuess()
             print(i)
-            
+        
+        for vertex in self.vertices:
+            print(vertex.edgeCorrelation)
         self.genBestGuess()
-        print(self.correlationMatrix)
-        print("mean is: {}".format(self.mean))
         return
-
-    def testAdd(self, score, chromosome):
-        self.updateMean(score)
-        normalisedVal = self.getNormalisedVal(score)
-        self.updateCorrelation(chromosome, normalisedVal)
-
-    def offsetProbMatrix(self):
-        minVals = np.min(self.correlationMatrix, axis=1)
-        for i in range(len(self.correlationMatrix)):
-            self.probMatrix[i] = self.correlationMatrix[i] + 1.01*abs(minVals[i])
-            total = np.sum(self.probMatrix[i])
-            self.probMatrix[i] = np.divide(self.probMatrix[i], total)
-        
-        self.correlationMatrix *= self.decay
-        return
-
-    def getNormalisedVal(self, score):
-        self.f = (1*(6**(-18)))
-        temp = abs(self.f*((score-5000)**10))
-        if temp > 10:
-            temp = 10
-            print(temp)
-            print(score)
-        if score > self.mean:
-            temp = -abs(temp)
-        return temp 
     
-    def updateMean(self, newVal):
-        self.solutionCount += 1
-        temp = newVal - self.mean
-        self.mean += temp/self.solutionCount
+    def addEdge(self, solution):
+        weights =[]
+        for pair in solution[1]:        
+            weight = self.vertices[pair[0]].edgeBest[pair[1]]
+            print(weight)
         return
 
-    def updateCorrelation(self, chromosome, normalisedVal):
-        city1 = chromosome[-1]
-        for city2 in chromosome:			
-            self.correlationMatrix[city1][city2] += normalisedVal
-            self.correlationMatrix[city2][city1] += normalisedVal
-            city1 = city2
+    def batchCalc(self, solutions):
+        tempMean = 0
+        self.variance = 0
+        self.meanAbsoluteDeviation = 0
+        length = len(solutions)
+
+        for sol in solutions:
+            temp = (sol - self.mean)
+
+            self.variance += temp*temp
+            self.meanAbsoluteDeviation += abs(temp)/length
+            tempMean += sol/length
         
+        self.variance = self.variance/length
+        self.mean = tempMean
+        self.sd = math.sqrt(self.variance)
+        return
+    
+    def offsetProbMatrix(self):
+        for vertex in self.vertices:
+            vertex.offsetProbMatrix()
+
+    def getNormalisedVal(self, score:float):
+        p = 1
+        a = 10
+        temp = (math.e)**(-(((score-self.mean)**2)/(2*(self.sd)**2))**p)
+        val = a - a*temp
+        if score > self.mean:
+            val = -abs(val)
+        return val
+
+    def updateCorrelation(self, solutionID, score, normalisedVal):
+        #solutionID format: [(vertexID, edgeID),...,...]
+        
+
+
+        for edge in solutionID:
+            val = self.vertices[edge[0]].updateEdgeVals(edge[1], score, normalisedVal)
+    
     def genBestGuess(self) -> list:
-        
-        validGuesses = []
-        for i in range(self.verticeCount):
-            validGuesses.append(i)
+        cur = np.random.randint(0, self.verticeCount)
+        bestGuess = [cur]
 
-        bestGuess = [0]
-        curCity = 0
-        for i in range(self.verticeCount):
-            temp = -10000000
-            chosenCity = None
-            for city in validGuesses:
-                if self.correlationMatrix[curCity][city] > temp:
-                    temp = self.correlationMatrix[curCity][city]
-                    chosenCity = city
-            bestGuess.append(chosenCity)
-            validGuesses.remove(chosenCity)
+        count = 1
+        while count < self.verticeCount:
+            edges = self.vertices[cur].getBestTransition(bestGuess)
+            for edge in edges:
+                bestGuess.append(edge)
+                count += 1
 
-        print("best guess : {} has value {} \n".format(bestGuess, self.graph.calcDistance(bestGuess)))
+            cur = edges[-1]
+
+        print(bestGuess)
+        print("best guess: {} has value {} \n".format(bestGuess, self.graph.calcDistance(bestGuess)))
+        print("mean: {}  sd: {} \n".format(self.mean, self.sd))
         return
 
     def genProbChromosome(self):
         cur = np.random.randint(0, self.verticeCount)
-        valid = [i for i in range(self.verticeCount)]
-        valid.remove(cur)
         solution = []
         solution.append(cur)
-        for i in range(self.verticeCount-1):
-            try:
-                prob = np.delete(self.probMatrix[cur], solution)
-                constant = 1/np.sum(prob)
-                prob *= constant
-                cur = self.rng.choice(valid,p=prob)
-                solution.append(cur)
-                valid.remove(cur)
-            except:
-                print("prob: ",prob)
-                print("constant: ", constant)
-                print("i: ",i)
-                print("solution: ",solution)
-                print("valid: ", valid)
-                print("probmatrix: ",self.probMatrix[cur])
-                print(self.probMatrix.tolist())
-                print(self.correlationMatrix.tolist())
-                exit()
-
-        return solution
+        solutionID = [] #vertexID, edgeID
+        count = 1
+        while count < self.verticeCount:
+            edges, edgeID = self.vertices[cur].chooseTransition(solution)
+            for edge in edges:
+                solution.append(edge)
+                count += 1
+            solutionID.append((cur, edgeID))
+            cur = edges[-1]
+       
+        return solution, solutionID
 
 def fetchGraph(xmlFile:str) -> Graph:
     File = ET.parse(xmlFile)
@@ -160,21 +313,22 @@ def fetchGraph(xmlFile:str) -> Graph:
     graph = root.find('graph')
     return Graph(graph)
 
-
 def main():
     
     graph = fetchGraph('burma14.xml')
-    length = len(graph.distanceMatrix)
-    agent = tester(length)
-    
-    
+    agent = tester(graph, 100, 50, 0.95)
+    agent.mainRun()
     # convert array into dataframe 
-    DF = pd.DataFrame(agent.correlationMatrix) 
+    """  DF = pd.DataFrame(agent.minLenMatrix) 
     DF2 = pd.DataFrame(graph.distanceMatrix)
+    DF3 = pd.DataFrame(agent.correlationMatrix)
+    DF4 = pd.DataFrame(agent.countMatrix)
     # save the dataframe as a csv file 
     DF.to_csv("data1.csv")
     DF2.to_csv("data2.csv")
-
+    DF3.to_csv("correlationMatrix.csv")
+    DF4.to_csv("countMatrix.csv") 
+    """
     return
 
 if __name__ == "__main__":
