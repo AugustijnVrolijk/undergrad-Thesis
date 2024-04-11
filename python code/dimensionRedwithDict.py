@@ -181,13 +181,16 @@ class vertex():
 
         return valid
 
-    def getValidDeletedTransitions(self, notValid):
+    def getValidDeletedTransitions(self, notValid, remainingNodes):
+        temp = notValid.copy()
+        if remainingNodes == 1:
+            temp.pop(0)
+     
         valid = []
-        print(self.deletedReq)
         for key in self.deletedReq:
             allow = True
             for val in key:
-                if val in notValid:
+                if val in temp:
                     allow = False
             if allow:
                 valid.append(key)
@@ -197,11 +200,8 @@ class vertex():
     def chooseTransition(self, notValid, remainingNodes):
         valid = self.getValidTransitions(notValid, remainingNodes)
         if len(valid) == 0:
-            valid = self.getValidDeletedTransitions(notValid)
-            print("valid", valid)
-            key = np.random.random_integers(0, len(valid))
-            print(key)
-            print(valid)
+            valid = self.getValidDeletedTransitions(notValid, remainingNodes)
+            key = np.random.randint(0, len(valid))
             return valid[key], True
 
         total = 0
@@ -223,9 +223,9 @@ class vertex():
 
         valid = self.getValidTransitions(notValid, remainingNodes)
         if len(valid) == 0:
-            valid = self.getValidDeletedTransitions(notValid)
-            key = np.random.choice(valid)
-            return key
+            valid = self.getValidDeletedTransitions(notValid, remainingNodes)
+            key = np.random.randint(0, len(valid))
+            return valid[key]
   
         best = valid[0]
         for key in valid:
@@ -338,20 +338,16 @@ class tester():
                 if j[0] < self.best + self.ratio*self.sd:
                     add.append(j)
                 elif j[0] > self.mean + (2*self.sd):
-                    rm.append(j)
+                    rm.append(j[1])
 
                 normalisedVal = self.calcSolUtility(j[0])
                 self.updateCorrelation(j[1], j[0],normalisedVal)
             
             self.ratio = 0.5
+            self.addEdges(add)
+            self.removeEdges(rm)
             
-            for sol in add:
-                #solutionID format: [(vertexID, edgeID),...,...]
-                self.addEdge(sol[1], sol[0])
-            
-            for sol in rm:
-                self.removeEdge(sol[1])
-            
+
             self.genBestGuess()
             print(i)
         
@@ -381,30 +377,39 @@ class tester():
 
         return normalisedVals
     
-    def removeEdge(self, solution):
-        #vertexID, edgeID                       
-        normalisedVals = self.normaliseEdges(solution)
-        if len(normalisedVals) != len(solution):
-            print("error, add edge normal values not equal to sol")
-            exit()
+    def removeEdges(self, solutions):
+        toDelete = set()
+        for sol in solutions:
+            #vertexID, edgeID                       
+            normalisedVals = self.normaliseEdges(sol)
+            if len(normalisedVals) != len(sol):
+                print("error, add edge normal values not equal to sol")
+                exit()
 
-        for i in range(len(normalisedVals)):
-            if normalisedVals[i] > 0.6:
-                self.vertices[solution[i][0]].removeEdge(solution[i][1])
+            for i in range(len(normalisedVals)):
+                if normalisedVals[i] > 0.6:
+                    toDelete.add((sol[i][0], sol[i][1]))
+        
+        for edge in toDelete:
+            self.vertices[edge[0]].removeEdge(edge[1])
         return
 
-    def addEdge(self, solution, score):
-        #vertexID, edgeID                       
-        normalisedVals = self.normaliseEdges(solution)
-        if len(normalisedVals) != len(solution):
-            print("error, add edge normal values not equal to sol")
-            exit()
-        j = 0
-        for i in range(1, len(normalisedVals)):
-            if normalisedVals[j] < 0.3 and normalisedVals[i] < 0.3:
-                self.vertices[solution[j][0]].addEdge(solution[j][1], solution[i][1], score)
+    def addEdges(self, solutions):
+        for sol in solutions:
+            solution = sol[1]
+            score = sol[0]
+        
+            #vertexID, edgeID      
+            normalisedVals = self.normaliseEdges(solution)
+            if len(normalisedVals) != len(solution):
+                print("error, add edge normal values not equal to sol")
+                exit()
+            j = 0
+            for i in range(1, len(normalisedVals)):
+                if normalisedVals[j] < 0.3 and normalisedVals[i] < 0.3:
+                    self.vertices[solution[j][0]].addEdge(solution[j][1], solution[i][1], score)
 
-            j = i
+                j = i
         return
 
     def batchCalc(self, solutions):
@@ -493,6 +498,9 @@ class tester():
             cur = edges[-1]
         solution.pop(0)
 
+        if len(solution) != self.verticeCount:
+            print("generated solution does not contain all nodes")
+            exit()
         return solution, solutionID
 
 def fetchGraph(xmlFile:str) -> Graph:
