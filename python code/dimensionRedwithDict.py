@@ -108,29 +108,14 @@ have a stack for when generating solution -> help with add edge and remove edge 
 
 """
 
-validTransition = {0:[(1,),(9,)],
-                  1:[(0,),(13,)],
-                  2:[(13,),(3,)],      
-                  3:[(2,),(4,)],
-                  4:[(5,),(3,)],
-                  5:[(4,),(11,)],
-                  6:[(11,),(12,)],
-                  7:[(12,),(10,)],
-                  8:[(10,),(9,)],
-                  9:[(0,),(8,)],
-                  10:[(8,),(7,)],
-                  11:[(5,),(6,)],
-                  12:[(7,),(6,)],
-                  13:[(2,),(1,)]} # type: ignore
-
 class vertex():
-    def __init__(self, edges, decay, offSet, ID) -> None:
+    def __init__(self, edges, decay, offSet, ID, deletedReq) -> None:
         self.edges = {}
-        self.deletedReq = []
+        self.deletedReq = deletedReq.tolist()
         for edge in edges:
             #key = vertexes edge travels to
             #value = [correlation, best]
-            self.edges[edge] = [1, np.inf]
+            self.edges[(edge,)] = [1, np.inf]
         self.nEdges = len(edges)
         self.rng = np.random.default_rng()
         self.decay = decay
@@ -156,19 +141,19 @@ class vertex():
                 self.edges[key][0] = self.decay*(self.edges[key][0])
         return
     
-    def getValidTransitions(self, notValid, remainingNodes, loud=False):
-        temp = notValid.copy()
-        last = temp.pop(0)
+    def getValidTransitions(self, notValid, remainingNodes):
+        last = notValid[0]
         valid = []
 
         for key in self.edges.keys():
             allow = True
 
-            if len(key) == remainingNodes and key[-1] == last:
-                for node in key:
-                    if node in temp:
-                        allow = False
-                        break
+            if len(key) == remainingNodes:
+                if key[-1] == last:
+                    for node in key:
+                        if node in notValid and node != last:
+                            allow = False
+                            break
 
             else:
                 for node in key:
@@ -181,28 +166,32 @@ class vertex():
 
         return valid
 
-    def getValidDeletedTransitions(self, notValid, remainingNodes):
-        temp = notValid.copy()
-        if remainingNodes == 1:
-            temp.pop(0)
-     
-        valid = []
-        for key in self.deletedReq:
-            allow = True
-            for val in key:
-                if val in temp:
-                    allow = False
-            if allow:
-                valid.append(key)
+    def isTransitionValid(self, key, notValid, remainingNodes):
+        last = notValid[0]
 
-        return valid
+        if remainingNodes == 1:
+            if key == last:
+                return True
+            return False
+        
+        if key in notValid:
+            return False
+
+        return True
 
     def chooseTransition(self, notValid, remainingNodes):
         valid = self.getValidTransitions(notValid, remainingNodes)
+
         if len(valid) == 0:
-            valid = self.getValidDeletedTransitions(notValid, remainingNodes)
-            key = np.random.randint(0, len(valid))
-            return valid[key], True
+            key = np.random.randint(0, len(self.deletedReq))
+            for i in range(len(self.deletedReq)):
+                key = (key+1)%len(self.deletedReq)
+                isValid = self.isTransitionValid(self.deletedReq[key], notValid, remainingNodes)
+                if isValid:
+                    return self.deletedReq[key], True
+                
+            print("no deleted node found error")
+            exit()
 
         total = 0
         for key in valid:
@@ -240,7 +229,7 @@ class vertex():
         if score < self.edges[edgeID][1]:
             self.edges[edgeID][1] = score
         return
-
+    
     def addEdge(self, EdgeID, verticesToAdd, best):
         newEdge = []
         for i in EdgeID:
@@ -255,7 +244,8 @@ class vertex():
             if best < self.edges[newKey][1]:
                 self.edges[newKey][1] = best
             return
-        self.edges[newKey] = [self.edges[EdgeID][0],best]
+        self.edges[newKey] = [(self.edges[EdgeID][0]/2),best]
+        self.edges[EdgeID][0] /= 1.5
         return 
     
     def removeEdge(self, edgeID):
@@ -263,7 +253,7 @@ class vertex():
         #edges of length one are needed in order to generate solutions in certain cases, add to special list to only consider
         #in worst cases when no other valid edges exist
         if len(edgeID) == 1:
-            self.deletedReq.append(edgeID)
+            self.deletedReq.append(sum(edgeID))
         return
     
 class Graph():
@@ -296,19 +286,20 @@ class tester():
     
     """
 
-    def __init__(self, graph:Graph, iterCount:int, popSize:int, probDecay:float, offSet:float):
+    def __init__(self, graph:Graph, iterCount:int, popSize:int, probDecay:float, offSet:float, numberEdges):
+        self.graph = graph
         if offSet <= 1:
             print("offset must be greater than 1")
             exit()
-        self.verticeCount = len(graph.distanceMatrix)
-        vertices = [(i,) for i in range(self.verticeCount)]
-        self.vertices = np.empty(self.verticeCount, dtype=vertex)
-        for i in range(len(graph.distanceMatrix)):
-            temp = vertices.copy()
-            id = sum(temp.pop(i))
-            self.vertices[i] = vertex(temp, probDecay, offSet, id)
 
-        self.graph = graph
+        self.verticeCount = len(graph.distanceMatrix)
+        self.vertices = np.empty(self.verticeCount, dtype=vertex)
+        index = np.arange(self.verticeCount)
+        for i in range(self.verticeCount):
+            ordered = np.column_stack((index, self.graph.distanceMatrix[i]))
+            ordered = np.rint(ordered[ordered[:, 1].argsort(), 0]).astype(int)
+            self.vertices[i] = vertex(ordered[0:numberEdges], probDecay, offSet, i, ordered[numberEdges:])
+
         self.mean = 0
         self.solutionCount = 0 
         self.decay = probDecay
@@ -317,45 +308,91 @@ class tester():
         self.best = np.inf
         self.bestSol = None
         self.ratio = 0
-
-    def mainRun(self):
         self.prevVal = np.inf
         self.prevBest = []
+
+        self.offsetCorrelationTime = np.empty(iterCount,dtype=float)
+        self.genSolsTime = np.empty(iterCount,dtype=float)
+        self.batchCalcTime = np.empty(iterCount,dtype=float)
+        self.correlationUpdateTime = np.empty(iterCount,dtype=float)
+        self.afterRemoveAndDeleteTime = np.empty(iterCount,dtype=float)
+        self.bestSolMatrix = np.empty(iterCount,dtype=float)
+        self.nAdded = np.empty(iterCount,dtype=float)
+        self.nRemoved = np.empty(iterCount,dtype=float)
+        self.meanOverTime = np.empty(iterCount,dtype=float)
+        self.sdOverTime = np.empty(iterCount,dtype=float) 
+
+    def mainRun(self):
+        bestRatio = 0.2
+        meanRatio = 0.8
+        removeRatio = 3
         for i in range(self.iterCount):
+            beginLoop = time.perf_counter()
             self.offsetProbMatrix()
+            afterOffset = time.perf_counter()
+            offsetCor = afterOffset - beginLoop
+
             solutions = np.empty((self.popSize, 2),dtype=object)
             for j in range(self.popSize):
                 temp, tempID = self.genProbChromosome()
                 solutions[j] = self.graph.calcDistance(temp), tempID
+            afterGenSol = time.perf_counter()
+            genSol =  afterGenSol - afterOffset
+
             self.batchCalc(solutions)
+            afterBatchCalc = time.perf_counter()
+            batchCalcT = afterBatchCalc - afterGenSol
+
             add = []
             rm = []
             print(self.best)
-            print(self.bestSol)
-
+            
             for j in solutions:
                 
-                if j[0] < self.best + self.ratio*self.sd:
+                if j[0] < bestRatio*self.best + meanRatio*self.mean:
                     add.append(j)
-                elif j[0] > self.mean + (2*self.sd):
+                elif j[0] > self.mean + (removeRatio*self.sd):
                     rm.append(j[1])
-
+                
                 normalisedVal = self.calcSolUtility(j[0])
                 self.updateCorrelation(j[1], j[0],normalisedVal)
             
-            self.ratio = 0.5
+            afterCorrelationCalc = time.perf_counter()
+            correlationCalc = afterCorrelationCalc - afterBatchCalc
+
+            bestRatio += 0.6/self.iterCount
+            meanRatio -= 0.6/self.iterCount
+            removeRatio -= 2/self.iterCount
             self.addEdges(add)
             self.removeEdges(rm)
-            
-
-            self.genBestGuess()
+            afterRemoveAndAdd =  time.perf_counter()
+            rmAndAdd = afterRemoveAndAdd - afterCorrelationCalc
+            print("removed: ", len(rm))
+            print("added: ", len(add))
+            print("mean: ", self.mean)
+            print("sd: ", self.sd)
+            #self.genBestGuess()
+            print("offset Correlation: ", offsetCor)
+            print("generate solutions: ", genSol)
+            print("Batch calc: ", batchCalcT)
+            print("Correlation Update: ", correlationCalc)
+            print("Add and delete edges: ", rmAndAdd)
+            self.offsetCorrelationTime[i] = offsetCor
+            self.genSolsTime[i] = genSol
+            self.batchCalcTime[i] = batchCalcT
+            self.correlationUpdateTime[i] = correlationCalc
+            self.afterRemoveAndDeleteTime[i] = rmAndAdd
+            self.bestSolMatrix[i] = self.best
+            self.nAdded[i] = len(add)
+            self.nRemoved[i] = len(rm)
+            self.meanOverTime[i] = self.mean
+            self.sdOverTime[i] = self.sd
             print(i)
         
         print("--------------------------------\n")
         print(self.best)
-        print(self.bestSol)
+        #print(self.bestSol)
         print("\n--------------------------------")
-        self.genBestGuess()
         return
     
     def normaliseEdges(self, solution):
@@ -387,13 +424,13 @@ class tester():
                 exit()
 
             for i in range(len(normalisedVals)):
-                if normalisedVals[i] > 0.6:
+                if normalisedVals[i] > 0.75:
                     toDelete.add((sol[i][0], sol[i][1]))
         
         for edge in toDelete:
             self.vertices[edge[0]].removeEdge(edge[1])
         return
-
+  
     def addEdges(self, solutions):
         for sol in solutions:
             solution = sol[1]
@@ -404,9 +441,18 @@ class tester():
             if len(normalisedVals) != len(solution):
                 print("error, add edge normal values not equal to sol")
                 exit()
+
+            elif (normalisedVals==0.5).all() == True :
+                j = 0
+                for i in range(1, len(normalisedVals)):
+                    self.vertices[solution[j][0]].addEdge(solution[j][1], solution[i][1], score)
+
+                    j = i
+                return
+
             j = 0
             for i in range(1, len(normalisedVals)):
-                if normalisedVals[j] < 0.3 and normalisedVals[i] < 0.3:
+                if normalisedVals[j] < 0.25 and normalisedVals[i] < 0.25:
                     self.vertices[solution[j][0]].addEdge(solution[j][1], solution[i][1], score)
 
                 j = i
@@ -484,18 +530,22 @@ class tester():
         remainingNodes = self.verticeCount
         while count < self.verticeCount:
             edges, isDeleted = self.vertices[cur].chooseTransition(solution, remainingNodes)
+            if isDeleted:
+                #dont add to solutionID, this edge was bad so shouldnt get removed again if it leads to a bad edge
+                solution.append(edges)
+                count += 1
+                remainingNodes -= 1
+                cur = edges
+                continue
+
             for edge in edges:
                 solution.append(edge)
                 count += 1
                 remainingNodes -= 1
 
-            if isDeleted:
-                #dont add to solutionID, this edge was bad so shouldnt get removed again if it leads to a bad edge
-                cur = edges[-1]
-                continue
-
             solutionID.append((cur, edges))
             cur = edges[-1]
+            
         solution.pop(0)
 
         if len(solution) != self.verticeCount:
@@ -511,24 +561,21 @@ def fetchGraph(xmlFile:str) -> Graph:
 
 def main():
     
-    graph = fetchGraph('burma14.xml')
+    graph = fetchGraph('gr202.xml')
     #iter count, popsize, correlation decay, offset: >1
-    agent = tester(graph, 100, 50, 0.975, 1.025)
+    print("got graph")
+    agent = tester(graph, 500, 250, 0.875, 1.125, 50)
+    print("got agent")
+
     agent.mainRun()
-    for vertex in agent.vertices:
-        print("\n")
-        print(vertex.edges)
     # convert array into dataframe 
-    """  DF = pd.DataFrame(agent.minLenMatrix) 
-    DF2 = pd.DataFrame(graph.distanceMatrix)
-    DF3 = pd.DataFrame(agent.correlationMatrix)
-    DF4 = pd.DataFrame(agent.countMatrix)
+
+    
+    ordered = np.column_stack((agent.offsetCorrelationTime, agent.genSolsTime, agent.batchCalcTime, agent.correlationUpdateTime, agent.afterRemoveAndDeleteTime, agent.bestSolMatrix, agent.nRemoved, agent.nAdded, agent.meanOverTime, agent.sdOverTime))
+    columnNames = ["offsetCorrelationTime" , "genSolsTime", "batchCalcTime", "correlationUpdateTime", "afterRemoveAndDeleteTime", "bestSolMatrix", "nRemoved", "nAdded", "meanOverTime", "sdOverTime"]
+    DF = pd.DataFrame(data =ordered, columns=columnNames) 
     # save the dataframe as a csv file 
     DF.to_csv("data1.csv")
-    DF2.to_csv("data2.csv")
-    DF3.to_csv("correlationMatrix.csv")
-    DF4.to_csv("countMatrix.csv") 
-    """
     return
 
 if __name__ == "__main__":
