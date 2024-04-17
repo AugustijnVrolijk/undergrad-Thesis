@@ -85,49 +85,134 @@ have a stack for when generating solution -> help with add edge and remove edge 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+                            experiments : try reward function of reinforcement learning: 1/value 
+                                            try adding RL epsilon -> when calcing prob rather than alpha* corr + beta * best, 
+                                            can be epsilon % chance of being 100% corr, then 1-epsilon for best
 
 """
- 
 
-class vertex():
-    def __init__(self, edges, decay, offSet, ID, deletedReq, parent) -> None:
-        self.edges = {}
-        self.deletedReq = []
-        for edge in deletedReq:
-            self.deletedReq.append((edge,))
+class Node():
+    def __init__(self, depth, momentum):
+        self.branches = []
+        self.probTotal = 0
+        self.momentum = momentum
+        self.depth = depth
+        self.prob = 0
+        self.transitionProb = 0
+        
+    def updateCorrelation(self,  score, corrVal):
+        pass
 
-        for edge in edges:
-            #key = vertexes edge travels to
-            #value = [correlation, best, momentum]
-            self.edges[(edge,)] = [1, np.inf, 0]
-        self.nEdges = len(edges)
-        self.rng = np.random.default_rng()
-        self.decay = decay
-        self.offSet = offSet
-        self.ID = ID
-        self.parent = parent
+    def addBranch(self, transition) -> None:
+        newBranch = TreeNode(self, transition)
+        self.Branches.append(newBranch)
         return
     
+    def chooseTransition(self, solution, blankVal):
+        valid = []
+        path = []
+        total = self.transitionProb
+        for branch in self.branches:
+            if solution[branch.transition.dimension] == blankVal:
+                total += branch.transitionProb
+                valid.append(branch)
+
+        val = np.random.uniform(0, total)
+
+        total = 0
+        key = self
+        for branch in valid:
+            total += branch.prob
+            if total > val:
+                path, key = branch.chooseTransition()
+                break
+        return path ,key
+    
+    def calcProb(self, TransitionProb):
+        self.transitionProb = self.momentum*TransitionProb
+        """
+            depth dropOff = (1/depth)^theta, where theta is between 0 and 1
+            low theta doesnt punish depth, high theta punishes depth a lot
+            ((1/depth)^theta) can be calculated on __init__()
+
+        self.prob = self.momentum*((1/depth)^theta)*transitionProb
+        
+        """
+        self.prob = self.transitionProb
+        for branch in self.branches:
+            self.prob += branch.calcProb()
+
+        return self.prob
+
+class TreeNode(Node):
+    def __init__(self, parent, transition, momentum) -> None:
+        super().__init__(depth = parent.depth + 1, momentum=momentum)
+        self.parent = parent
+        self.transition = transition
+        pass
+
+    def calcProb(self) -> None:
+        return super().calcProb(self.transition.transitionProb)
+    
+    def addBranch(self, transition) -> None:
+        super().addBranch(transition)
+
+    def chooseTransition(self, solution, blankVal):
+        path, key = super().chooseTransition(solution, blankVal)
+        path.append((self.transition.dimension, self.transition.val))
+        return path, key
+    
+    def updateCorrelation(self, score, corrVal, momentumMultiplier = 1):
+        self.transition.updateCorrelation(score, corrVal, momentumMultiplier)
+        self.parent.updateCorrelation(score, corrVal, momentumMultiplier)
+
+        pass
+    
+class Transition(Node):
+    def __init__(self, val, dimension) -> None:
+        super().__init__(depth=1, momentum=1)
+        self.best = np.inf
+        self.correlation = 0
+        self.val = val
+        self.dimension = dimension
+
+    def calcProb(self) -> None:
+        return super().calcProb(self.transitionProb)
+    
+    def addBranch(self, transition) -> None:
+        super().addBranch(transition)
+
+    def chooseTransition(self, solution, blankVal):
+        path, key = super().chooseTransition(solution, blankVal)
+        path.append((self.dimension, self.val))
+        return path, key
+
+    def calcSelfProb(self, correlationMin, correlationDifference, bestMin, bestDifference, alpha, beta):
+        corTemp = (self.correlation - correlationMin)/correlationDifference 
+        bestTemp = (self.best - bestMin)/bestDifference
+        self.transitionProb = alpha*corTemp + beta*bestTemp
+        return
+    
+    def updateCorrelation(self, score, corrVal, momentumMultiplier = 1):
+        """
+        try multiple mometum multipliers
+        
+        """
+        self.correlation += corrVal
+        
+        if score < self.best:
+            self.best = score
+            self.momentum 
+            return True
+        return False
+    
+    def updateMometum(self, momentumDif):
+        self.momentum += momentumDif
+        
+        
+
+
+class vertex():
     def offsetCorrelation(self):
         minVal = np.inf
         for key in self.edges.keys():
@@ -145,92 +230,7 @@ class vertex():
             for key in self.edges.keys():
                 self.edges[key][0] = self.decay*(self.edges[key][0])
         return
-    
-    def getValidTransitions(self, notValid, remainingNodes):
-        last = notValid[0]
-        valid = []
 
-        for key in self.edges.keys():
-            allow = True
-
-            if len(key) == remainingNodes:
-                if key[-1] == last:
-                    for node in key:
-                        if node in notValid and node != last:
-                            allow = False
-                            break
-
-            else:
-                for node in key:
-                    if node in notValid:
-                        allow = False
-                        break
-
-            if allow:
-                valid.append(key)
-
-        return valid
-
-    def isTransitionValid(self, keyTuple, notValid, remainingNodes):
-        last = notValid[0]
-        key = keyTuple[0]
-
-        if remainingNodes == 1:
-            if key == last:
-                return True
-            return False
-        
-        if key in notValid:
-            return False
-
-        return True
-
-    def chooseTransition(self, notValid, remainingNodes):
-        valid = self.getValidTransitions(notValid, remainingNodes)
-
-        if len(valid) == 0:
-            key = np.random.randint(0, len(self.deletedReq))
-            for i in range(len(self.deletedReq)):
-                key = (key+1)%len(self.deletedReq)
-                isValid = self.isTransitionValid(self.deletedReq[key], notValid, remainingNodes)
-               
-                if isValid:
-                    self.edges[self.deletedReq[key]] = [0 ,self.parent.mean]
-                    return self.deletedReq[key], True
-                
-            print("no deleted node found error")
-            exit()
-
-        
-        total = 0
-        for key in valid:
-            total += self.edges[key][0]
-        
-        if total == 0:
-            key = np.random.randint(0, len(valid))
-            return valid[key], False
-
-        val = np.random.uniform(0, total)
-
-        total = 0
-        for key in valid:
-            total += self.edges[key][0]
-            if total > val:
-                return key, False
-        
-        print("something went wrong")
-        exit()
-
-    def updateEdgeVals(self, edgeID, score, normalisedVal) -> None:
-        
-        self.edges[edgeID][0] += normalisedVal
-        if score < self.edges[edgeID][1]:
-            self.edges[edgeID][1] = score
-        return
-    
-    def penaliseEdgeVals(self, edgeID) -> None:
-        self.edges[edgeID][0] *= 0.8
-    
     def addEdge(self, EdgeID, verticesToAdd, best):
         newEdge = []
         for i in EdgeID:
@@ -254,31 +254,10 @@ class vertex():
         #edges of length one are needed in order to generate solutions in certain cases, add to special list to only consider
         #in worst cases when no other valid edges exist
         if len(edgeID) == 1:
-            self.deletedReq.append(edgeID)
+            self.deletedReq.append(sum(edgeID))
         return
     
-class Graph():
-    def __init__(self, XMLgraph) -> None:
-        self.distanceMatrix = np.zeros((len(XMLgraph),len(XMLgraph)))
-        parent1 = 0
-        for Vertex in XMLgraph.iter('vertex'):
-            for Edge in Vertex.iter('edge'):
-                parent2 = int(Edge.text)
-                weight = int(float(Edge.get('cost')))
-                self.distanceMatrix[parent1][parent2] = weight
-            parent1 += 1
-
-    def calcDistance(self, circuitVector :list) -> int: 
-        distance = 0
-        i = circuitVector[-1]
-        for f in range(len(circuitVector)):
-            j = circuitVector[f]
-            distance += self.distanceMatrix[i][j]
-            i = j
-           
-        return distance
-
-class tester():
+class TransitionMatrixTree():
     """
     value of probDecay, offset and popsize all affect each other with the outcome,
      i.e to be consistent when changing popsize, also change probDecay and offset
@@ -287,22 +266,24 @@ class tester():
     
     """
 
-    def __init__(self, graph:Graph, iterCount:int, popSize:int, probDecay:float, offSet:float, numberEdges):
-        self.graph = graph
+    def __init__(self, optimisationFunc, posTransitions, Ndimen,iterCount:int, popSize:int, probDecay:float, offSet:float, maxTreeDepth, alpha, beta):
+        
+        self.optimisationFunc = optimisationFunc
         if offSet <= 1:
             print("offset must be greater than 1")
             exit()
-
-        self.verticeCount = len(graph.distanceMatrix)
-        self.vertices = np.empty(self.verticeCount, dtype=vertex)
-        index = np.arange(self.verticeCount)
-        for i in range(self.verticeCount):
-            ordered = np.column_stack((index, self.graph.distanceMatrix[i]))
-            ordered = np.rint(ordered[ordered[:, 1].argsort(), 0]).astype(int)
-            self.vertices[i] = vertex(ordered[0:numberEdges], probDecay, offSet, i, ordered[numberEdges:], self)
+        #posTransitions is array of the transitions
+        self.possibleTransitions = posTransitions  
+        #number of dimensions      
+        self.Dimensions = Ndimen
+        self.transitionMatrix = [[Transition(j, i, maxTreeDepth, alpha, beta) for j in range(self.possibleTransitions)] for i in range(self.Dimensions)]
+        self.probMatrix = np.empty[(self.Dimensions, len(self.possibleTransitions))]
+        self.transitionMatrix = np.empty[(self.Dimensions, len(self.possibleTransitions))]
+        for i in range(self.Dimensions):
+            for j in range(len(self.possibleTransitions)):
+                self.transitionMatrix[i,j] = Transition(self.possibleTransitions[j], i, maxTreeDepth, alpha, beta)
 
         self.mean = 0
-        self.solutionCount = 0 
         self.decay = probDecay
         self.iterCount = iterCount
         self.popSize = popSize
@@ -311,7 +292,9 @@ class tester():
         self.ratio = 0
         self.prevVal = np.inf
         self.prevBest = []
-        self.maxEdgeLen = 6
+        self.alpha = alpha
+        self.beta = beta
+        self.maxTreeDepth = maxTreeDepth
 
         self.offsetCorrelationTime = np.empty(iterCount,dtype=float)
         self.genSolsTime = np.empty(iterCount,dtype=float)
@@ -325,19 +308,17 @@ class tester():
         self.sdOverTime = np.empty(iterCount,dtype=float) 
 
     def mainRun(self):
-        bestRatio = 0.3
-        meanRatio = 0.7
-        removeRatio = 3
+
         for i in range(self.iterCount):
             beginLoop = time.perf_counter()
-            self.offsetProbMatrix()
+            self.CalcProbMatrix()
             afterOffset = time.perf_counter()
             offsetCor = afterOffset - beginLoop
 
             solutions = np.empty((self.popSize, 2),dtype=object)
             for j in range(self.popSize):
-                temp, tempID = self.genProbChromosome()
-                solutions[j] = self.graph.calcDistance(temp), tempID
+                sol, solID = self.genNKSolution()
+                solutions[j] = self.optimisationFunc.calcScore(sol), solID
             afterGenSol = time.perf_counter()
             genSol =  afterGenSol - afterOffset
 
@@ -349,30 +330,26 @@ class tester():
             rm = []
             print(self.best)
             
-            for j in solutions:
+            for sol in solutions:
                 
-                """ if j[0] < bestRatio*self.best + meanRatio*self.mean:
-                    add.append(j)
-                elif j[0] > self.mean + (removeRatio*self.sd):
-                    rm.append(j[1]) """
+                if sol[0] < bestRatio*self.best + meanRatio*self.mean:
+                    add.append(sol)
+                elif sol[0] > self.mean + (removeRatio*self.sd):
+                    rm.append(sol[1])
                 
-                if j[0] < 1*self.best + 1.2*self.sd:
-                    add.append(j)
-                elif j[0] > self.mean + (2*self.sd):
-                    rm.append(j[1])
-                
-
-                normalisedVal = self.calcSolUtility(j[0])
-                self.updateCorrelation(j[1], j[0],normalisedVal)
+                reward = self.calcReward(sol[0])
+                self.updateCorrelation(sol[1], sol[0], reward)
             
             afterCorrelationCalc = time.perf_counter()
             correlationCalc = afterCorrelationCalc - afterBatchCalc
 
-            bestRatio += 0.65/self.iterCount
-            meanRatio -= 0.65/self.iterCount
+            bestRatio += 0.6/self.iterCount
+            meanRatio -= 0.6/self.iterCount
             removeRatio -= 2/self.iterCount
             self.addEdges(add)
             self.removeEdges(rm)
+
+            
             afterRemoveAndAdd =  time.perf_counter()
             rmAndAdd = afterRemoveAndAdd - afterCorrelationCalc
             print("removed: ", len(rm))
@@ -425,19 +402,16 @@ class tester():
     def removeEdges(self, solutions):
         toDelete = set()
         for sol in solutions:
-            #vertexID, edgeID          
-            try:             
-                normalisedVals = self.normaliseEdges(sol)
-                if len(normalisedVals) != len(sol):
-                    print("error, add edge normal values not equal to sol")
-                    exit()
+            #vertexID, edgeID                       
+            normalisedVals = self.normaliseEdges(sol)
+            if len(normalisedVals) != len(sol):
+                print("error, add edge normal values not equal to sol")
+                exit()
 
-                for i in range(len(normalisedVals)):
-                    if normalisedVals[i] > 0.75:
-                        toDelete.add((sol[i][0], sol[i][1]))
-            except:
-                print("sol:", sol)
-            
+            for i in range(len(normalisedVals)):
+                if normalisedVals[i] > 0.75:
+                    toDelete.add((sol[i][0], sol[i][1]))
+        
         for edge in toDelete:
             self.vertices[edge[0]].removeEdge(edge[1])
         return
@@ -464,8 +438,6 @@ class tester():
             j = 0
             for i in range(1, len(normalisedVals)):
                 if normalisedVals[j] < 0.25 and normalisedVals[i] < 0.25:
-                    if len(solution[j][1]) > self.maxEdgeLen or len(solution[i][1]) > self.maxEdgeLen:
-                        continue
                     self.vertices[solution[j][0]].addEdge(solution[j][1], solution[i][1], score)
 
                 j = i
@@ -494,77 +466,76 @@ class tester():
         self.sd = math.sqrt(self.variance)
         return
     
-    def offsetProbMatrix(self):
-        for vertex in self.vertices:
-            vertex.offsetCorrelation()
+    def CalcProbMatrix(self):
+        minCorr = np.inf
+        maxCorr = 0
+        minBest = np.inf
+        maxBest = 0
+        for i in range(len(self.transitionMatrix)):
+            for j in range(len(self.transitionMatrix[0])):
+                if self.transitionMatrix[i][j].correlation > maxCorr:
+                    maxCorr = self.transitionMatrix[i][j].correlation
+                elif self.transitionMatrix[i][j].correlation < minCorr:
+                    minCorr = self.transitionMatrix[i][j].correlation
 
-    def calcSolUtility(self, score:float):
+                if self.transitionMatrix[i][j].best > maxBest:
+                    maxBest = self.transitionMatrix[i][j].correlation
+                elif self.transitionMatrix[i][j].best < minBest:
+                    minBest = self.transitionMatrix[i][j].correlation
+
+        corrDifference = maxCorr - minCorr
+        bestDifference = maxBest - minBest
+
+        for i in range(len(self.transitionMatrix)):
+            for j in range(len(self.transitionMatrix[0])):
+                self.transitionMatrix[i][j].calcSelfProb(minCorr, corrDifference, minBest, bestDifference, self.alpha, self.beta)
+
+        for i in range(len(self.transitionMatrix)):
+            for j in range(len(self.transitionMatrix[0])):
+                prob = self.transitionMatrix[i][j].calcProb()
+                self.probMatrix[i, j] = prob
+        return
+    
+    def calcReward(self, score:float):
         p = 1
-        a = 10
+        a = 1
         temp = (math.e)**(-(((score-self.mean)**2)/(2*(self.sd)**2))**p)
         val = a - a*temp
         if score > self.mean:
             val = -abs(val)
         return val
 
-    def updateCorrelation(self, solutionID, score, normalisedVal):
+    def updateCorrelation(self, solutionID, score, reward):
         #solutionID format: [(vertexID, edgeID),...,...]
         for edge in solutionID:
-            self.vertices[edge[0]].updateEdgeVals(edge[1], score, normalisedVal)
+            edge.updateCorrelation(score, reward)
 
-    def penaliseCorrelation(self, solutionID):
-        for edge in solutionID:
-            self.vertices[edge[0]].penaliseEdgeVals(edge[1])
+    def genNKSolution(self):
+        blankVal = 2
+        solutionID = []
+        solution = np.fill((self.Dimensions),blankVal)
 
-    def genBestGuess(self) -> list:
-        cur = np.random.randint(0, self.verticeCount)
-        bestGuess = [cur]
-
-        count = 0
-        remainingNodes = self.verticeCount
-        temp = []
-        while count < self.verticeCount:
-            edges = self.vertices[cur].getBestTransition(bestGuess, remainingNodes)
+        for dimension in range(self.Dimensions):
+            if solution[dimension] != blankVal:
+                continue
+            cur = None
+            total = np.sum(self.probMatrix[dimension,:])
+            val = np.random.uniform(0, total)
+            total = 0
+            for transition in range(len(self.probMatrix[dimension, :])):
+                total += self.probMatrix[dimension, transition]
+                if total > val:
+                    cur = transition
+                    break
+            
+            edges, edgeID = self.transitionMatrix[dimension, transition].chooseTransition(solution, blankVal)
+            solutionID.append((edgeID))
             for edge in edges:
-                bestGuess.append(edge)
-                count += 1
-                remainingNodes -= 1
-            temp.append((cur, edges))
-            cur = edges[-1]
-        bestGuess.pop(0)
-        
-        print("solution format: ", temp)
-        print("best guess: {} has value {} \n".format(bestGuess, self.graph.calcDistance(bestGuess)))
-        print("mean: {}  sd: {} \n".format(self.mean, self.sd))
-        return bestGuess
+                #edges formated as [(dimension, value),...]
+                solution[edge[0]] = edge[1]
 
-    def genProbChromosome(self):
-        cur = np.random.randint(0, self.verticeCount)
-        solution = []
-        solution.append(cur)
-        solutionID = [] #vertexID, edgeID
-        count = 0
-        remainingNodes = self.verticeCount
-        while count < self.verticeCount:
-            edges, isDeleted = self.vertices[cur].chooseTransition(solution, remainingNodes)
-            for edge in edges:
-                solution.append(edge)
-                count += 1
-                remainingNodes -= 1
-
-            solutionID.append((cur, edges))
-            cur = edges[-1]
-            if isDeleted:
-                self.penaliseCorrelation(solutionID)
-
-        temp = solution.pop(0)
-
-        if len(solution) != self.verticeCount:
+        if blankVal in solution:
             print("generated solution does not contain all nodes")
-            print(solution)
-            print(solutionID)
-            print(temp)
-            print(count, remainingNodes)
             exit()
 
         return solution, solutionID
@@ -577,10 +548,10 @@ def fetchGraph(xmlFile:str) -> Graph:
 
 def main():
     
-    graph = fetchGraph('brazil58.xml')
+    graph = fetchGraph('gr202.xml')
     #iter count, popsize, correlation decay, offset: >1
     print("got graph")
-    agent = tester(graph, 500, 150, 0.85, 1.2, len(graph.distanceMatrix[0]))
+    agent = TransitionMatrixTree(graph, 500, 250, 0.875, 1.125, 50)
     print("got agent")
 
     agent.mainRun()

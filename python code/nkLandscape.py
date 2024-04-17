@@ -5,6 +5,8 @@
 ## 00-0, 01-1, 10-2, 11-3 
 import random
 import math
+import numpy as np
+import time
 
 class NKLandscape:
     """ NK-landscape class """
@@ -70,8 +72,48 @@ class NKLandscape:
             bitStr.append(bit)
         return bitStr
 
+
+def genRando(n):
+    options = np.array(["0","1"])
+    str = ""
+    for i in range(n):
+        str += np.random.choice(options)
+    return str
+
+        
 # testing purpose
-model = NKLandscape(10,3)
-print(model.getNeigh())
-print(model.getFunc())
-print(model.compFit('1000010101'))
+n = 50
+k = 1
+iter = 1000
+
+start = time.perf_counter()
+model = NKLandscape(n,k)
+model2 = NKLandscape(n, k)
+end = time.perf_counter()
+modelGen = end - start
+
+start = time.perf_counter()
+sols = [0 for i in range(iter)]
+for i in range(iter):
+    test = genRando(n)
+    sols[i] = test
+    
+
+end = time.perf_counter()
+solGen = end - start
+
+start = time.perf_counter()
+vals = [[0,0] for i in range(iter)]
+for i in range(iter):
+
+    vals[i][0] = model.compFit(sols[i])
+    vals[i][1] = model.compFit(sols[i])
+
+end = time.perf_counter()
+eval = end - start
+
+print("eval: ", eval)
+print("solGen: ", solGen)
+print("modelGen: ", modelGen)
+#print(vals)
+print("done")
