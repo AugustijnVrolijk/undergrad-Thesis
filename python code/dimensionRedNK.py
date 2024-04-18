@@ -164,9 +164,25 @@ class TreeNode(Node):
     
     def updateCorrelation(self, score, corrVal, momentumMultiplier = 1):
         self.transition.updateCorrelation(score, corrVal, momentumMultiplier)
+        momentumMultiplier = momentumMultiplier/2
+        """
+        try multiple mometum multipliers values, currently at 1, halving by 2, but could be dividing by 1.5 etc..
+        maybe linked to number of dimensions?
+        """
         self.parent.updateCorrelation(score, corrVal, momentumMultiplier)
-
-        pass
+        return
+    
+    def getBest(self):
+        return self.transition.best
+    
+    def delete(self):
+        for branch in self.branches:
+            print("we are deleting branches in tree")
+            branch.delete()
+            self.branches.remove(branch)
+        self.parent.branches.remove(self)
+        del self
+        return
     
 class Transition(Node):
     def __init__(self, val, dimension) -> None:
@@ -195,41 +211,37 @@ class Transition(Node):
     
     def updateCorrelation(self, score, corrVal, momentumMultiplier = 1):
         """
-        try multiple mometum multipliers
+        try multiple min momentum, currently at 0.1
         
         """
         self.correlation += corrVal
         
         if score < self.best:
             self.best = score
-            self.momentum 
+            self.momentum += 1
             return True
+        else:
+            val = self.momentum - momentumMultiplier*0.1
+            if val > 0.1:
+                self.momentum = val
         return False
     
-    def updateMometum(self, momentumDif):
-        self.momentum += momentumDif
-        
-        
+    def getBest(self):
+        return self.best
 
+    def removeChild(self, child):
+        self.branches.remove(child)
 
-class vertex():
-    def offsetCorrelation(self):
-        minVal = np.inf
-        for key in self.edges.keys():
-            if self.edges[key][0] < minVal:
-                minVal = self.edges[key][0]
-
-        if minVal < 0:
-            for key in self.edges.keys():
-                self.edges[key][0] = self.decay*(self.edges[key][0] + self.offSet*(abs(minVal)))
-        elif minVal == 0:
-            minVal = 0.2
-            for key in self.edges.keys():
-                self.edges[key][0] = self.decay*(self.edges[key][0] + self.offSet*(abs(minVal)))
-        else:
-            for key in self.edges.keys():
-                self.edges[key][0] = self.decay*(self.edges[key][0])
+    def delete(self):
+        for branch in self.branches:
+            print("deleting transition root which has promising values")
+            print(branch.transition.best)
+            branch.delete()
+        #momentum set to 0 means it will never be called again
+        self.momentum = 0
         return
+
+        """ 
 
     def addEdge(self, EdgeID, verticesToAdd, best):
         newEdge = []
@@ -255,7 +267,7 @@ class vertex():
         #in worst cases when no other valid edges exist
         if len(edgeID) == 1:
             self.deletedReq.append(sum(edgeID))
-        return
+        return """
     
 class TransitionMatrixTree():
     """
@@ -386,12 +398,12 @@ class TransitionMatrixTree():
         normalisedVals = np.empty(length, dtype=float)
         for i in range(len(solution)):
             #solution[i][0] is the vertexID, solution[i][1] is the edgeID, the final [1] represents the edge dictionary stored best value
-            normalisedVals[i] = self.vertices[solution[i][0]].edges[solution[i][1]][1]
+            normalisedVals[i] = solution[i].getBest()
 
         minVal = np.min(normalisedVals)
         difference = np.max(normalisedVals) - minVal
         if difference == 0:
-            normalisedVals = np.full(length, 0.5)
+            normalisedVals = np.zeros(length)
             return normalisedVals
         
         normalise = lambda x: (x-minVal)/difference
@@ -401,19 +413,20 @@ class TransitionMatrixTree():
     
     def removeEdges(self, solutions):
         toDelete = set()
+
         for sol in solutions:
-            #vertexID, edgeID                       
+            #EdegID                     
             normalisedVals = self.normaliseEdges(sol)
             if len(normalisedVals) != len(sol):
                 print("error, add edge normal values not equal to sol")
                 exit()
 
             for i in range(len(normalisedVals)):
-                if normalisedVals[i] > 0.75:
-                    toDelete.add((sol[i][0], sol[i][1]))
+                if normalisedVals[i] > 0.7:
+                    toDelete.add(sol[i])
         
         for edge in toDelete:
-            self.vertices[edge[0]].removeEdge(edge[1])
+            edge.delete()
         return
   
     def addEdges(self, solutions):
@@ -421,26 +434,36 @@ class TransitionMatrixTree():
             solution = sol[1]
             score = sol[0]
         
-            #vertexID, edgeID      
+                
             normalisedVals = self.normaliseEdges(solution)
             if len(normalisedVals) != len(solution):
                 print("error, add edge normal values not equal to sol")
                 exit()
 
-            elif (normalisedVals==0.5).all() == True :
-                j = 0
-                for i in range(1, len(normalisedVals)):
-                    self.vertices[solution[j][0]].addEdge(solution[j][1], solution[i][1], score)
 
-                    j = i
-                return
+            """
+            adding edge threshold? gone for 0.25 but this can change
+            
+            """
+            temp = []
+            for i in range(len(solution)):
+                if normalisedVals[i] < 0.25:
+                    temp.append(solution[i])
 
-            j = 0
-            for i in range(1, len(normalisedVals)):
-                if normalisedVals[j] < 0.25 and normalisedVals[i] < 0.25:
-                    self.vertices[solution[j][0]].addEdge(solution[j][1], solution[i][1], score)
 
-                j = i
+            """
+            check condition if odd number - this will give preferable treatment to earlier dimensions -> 
+            the first in the list temp will always get paired up with the second as it descends etc...
+            jump by 2?"""
+            remaining = len(temp)
+            for i in range(remaining, 0, -1):
+                remaining -= 1
+                val = np.random.randint(remaining)
+                if val == i:
+                    print("error adding edge")
+                    exit()
+                temp[val].addBranch(temp[i])
+
         return
 
     def batchCalc(self, solutions):
@@ -524,7 +547,8 @@ class TransitionMatrixTree():
             total = 0
             for transition in range(len(self.probMatrix[dimension, :])):
                 total += self.probMatrix[dimension, transition]
-                if total > val:
+                #>= equal needed incase probability is 0 for all transitions
+                if total >= val:
                     cur = transition
                     break
             
