@@ -94,18 +94,17 @@ have a stack for when generating solution -> help with add edge and remove edge 
 class Node():
     def __init__(self, depth, momentum):
         self.branches = []
-        self.probTotal = 0
         self.momentum = momentum
         self.depth = depth
         self.prob = 0
         self.transitionProb = 0
-        
-    def updateCorrelation(self,  score, corrVal):
-        pass
 
-    def addBranch(self, transition) -> None:
-        newBranch = TreeNode(self, transition)
-        self.Branches.append(newBranch)
+    def addBranch(self, branch, maxTreeDepth) -> None:
+        if self.depth == maxTreeDepth:
+            return
+        else:
+            newBranch = TreeNode(self, branch.transition, self.momentum)
+            self.branches.append(newBranch)
         return
     
     def chooseTransition(self, solution, blankVal):
@@ -154,9 +153,10 @@ class TreeNode(Node):
     def calcProb(self) -> None:
         return super().calcProb(self.transition.transitionProb)
     
-    def addBranch(self, transition) -> None:
-        super().addBranch(transition)
-
+    def addBranch(self, branch, maxTreeDepth):
+        super().addBranch(branch, maxTreeDepth)
+        return
+    
     def chooseTransition(self, solution, blankVal):
         path, key = super().chooseTransition(solution, blankVal)
         path.append((self.transition.dimension, self.transition.val))
@@ -184,6 +184,9 @@ class TreeNode(Node):
         del self
         return
     
+    def getRoot(self):
+        return self.parent.getRoot()
+    
 class Transition(Node):
     def __init__(self, val, dimension) -> None:
         super().__init__(depth=1, momentum=1)
@@ -195,9 +198,6 @@ class Transition(Node):
     def calcProb(self) -> None:
         return super().calcProb(self.transitionProb)
     
-    def addBranch(self, transition) -> None:
-        super().addBranch(transition)
-
     def chooseTransition(self, solution, blankVal):
         path, key = super().chooseTransition(solution, blankVal)
         path.append((self.dimension, self.val))
@@ -239,6 +239,13 @@ class Transition(Node):
             branch.delete()
         #momentum set to 0 means it will never be called again
         self.momentum = 0
+        return
+    
+    def getRoot(self):
+        return self
+
+    def addBranch(self, branch, maxTreeDepth):
+        super().addBranch(branch, maxTreeDepth)
         return
 
         """ 
@@ -345,7 +352,7 @@ class TransitionMatrixTree():
             for sol in solutions:
                 
                 if sol[0] < bestRatio*self.best + meanRatio*self.mean:
-                    add.append(sol)
+                    add.append(sol[1])
                 elif sol[0] > self.mean + (removeRatio*self.sd):
                     rm.append(sol[1])
                 
@@ -364,6 +371,7 @@ class TransitionMatrixTree():
             
             afterRemoveAndAdd =  time.perf_counter()
             rmAndAdd = afterRemoveAndAdd - afterCorrelationCalc
+            
             print("removed: ", len(rm))
             print("added: ", len(add))
             print("mean: ", self.mean)
@@ -430,16 +438,14 @@ class TransitionMatrixTree():
         return
   
     def addEdges(self, solutions):
-        for sol in solutions:
-            solution = sol[1]
-            score = sol[0]
-        
-                
+
+        branchesToAdd = {}
+
+        for solution in solutions:        
             normalisedVals = self.normaliseEdges(solution)
             if len(normalisedVals) != len(solution):
                 print("error, add edge normal values not equal to sol")
                 exit()
-
 
             """
             adding edge threshold? gone for 0.25 but this can change
@@ -455,14 +461,27 @@ class TransitionMatrixTree():
             check condition if odd number - this will give preferable treatment to earlier dimensions -> 
             the first in the list temp will always get paired up with the second as it descends etc...
             jump by 2?"""
-            remaining = len(temp)
-            for i in range(remaining, 0, -1):
-                remaining -= 1
-                val = np.random.randint(remaining)
-                if val == i:
-                    print("error adding edge")
-                    exit()
-                temp[val].addBranch(temp[i])
+            for i in range(0 ,2*len(temp)):
+                val1 = np.random.randint(len(temp))
+                val2 = np.random.randint(len(temp))
+                while val2 == val1:
+                    val2 = np.random.randint(len(temp))
+                if val1 < val2:
+                    if temp[val1] in branchesToAdd.keys():
+                        branchesToAdd[temp[val1]].append(temp[val2])
+                    else:
+                        branchesToAdd[temp[val1]] = [temp[val2]]
+                else:
+                    if temp[val2] in branchesToAdd.keys():
+                        branchesToAdd[temp[val2]].append(temp[val1])
+                    else:
+                        branchesToAdd[temp[val2]] = [temp[val1]]
+
+        for key in branchesToAdd.keys():
+            for branch in branchesToAdd[key]:
+                key.addBranch(branch, self.maxTreeDepth)
+            """
+            add chance of mutation??? add branch to temp[val] but not the one given by temp[i]?"""
 
         return
 
@@ -563,16 +582,16 @@ class TransitionMatrixTree():
             exit()
 
         return solution, solutionID
-
+""" 
 def fetchGraph(xmlFile:str) -> Graph:
     File = ET.parse(xmlFile)
     root = File.getroot()
     graph = root.find('graph')
-    return Graph(graph)
+    return Graph(graph) """
 
 def main():
     
-    graph = fetchGraph('gr202.xml')
+    #graph = fetchGraph('gr202.xml')
     #iter count, popsize, correlation decay, offset: >1
     print("got graph")
     agent = TransitionMatrixTree(graph, 500, 250, 0.875, 1.125, 50)

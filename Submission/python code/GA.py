@@ -120,6 +120,8 @@ def invSeqCrossover(agent1:agent, agent2:agent) -> tuple:
 	return child1, child2
 
 def GA(popsize:int, cityNumber:int, graph:Graph, iterCount:int, tournamentSize:int, mutationProb:float) -> agent:
+	bestSolMatrix = np.empty(iterCount,dtype=float)
+	meanOverTime = np.empty(iterCount,dtype=float)
 	#generate initial pop
 	pop = [None] * popsize
 	for i in range(popsize):
@@ -169,11 +171,12 @@ def fetchGraph(xmlFile:str) -> Graph:
 def main():
 	
 	graph = fetchGraph('burma14.xml')
-	best, pop = GA(200,len(graph.distanceMatrix[0]), graph,500,5,0.2)
-	print("best solution score: {}, solution: {}".format(best.score, best.chromosome))
-	for Agent in pop:
-		print(Agent.score)
-
+	temp = []
+	for i in range(10):
+		best, pop = GA(50,len(graph.distanceMatrix[0]), graph,50,10,0.05)
+		print("best solution score: {}, solution: {}".format(best.score, best.chromosome))
+		temp.append(best.score)
+	print(temp)
 	return
 
 if __name__ == "__main__":
